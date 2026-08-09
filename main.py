@@ -19,6 +19,7 @@ from telegram.ext import (
 )
 
 from bot import config
+from bot import pyro_uploader
 from bot.database import db
 from bot.queue_manager import QueueManager
 from bot.handlers.start import start_handler, help_handler
@@ -35,6 +36,7 @@ logger = config.setup_logging()
 
 async def _post_init(app: Application):
     await db.connect()
+    await pyro_uploader.start()  # enables >50MB uploads via MTProto, if configured
 
     # Anything stuck 'processing' from a previous crash goes back to pending.
     reset = await db.reset_stuck_processing()
@@ -64,6 +66,7 @@ async def _post_init(app: Application):
 
 
 async def _post_shutdown(app: Application):
+    await pyro_uploader.stop()
     await db.close()
 
 

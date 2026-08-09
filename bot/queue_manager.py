@@ -16,6 +16,7 @@ from telegram import InputFile
 from telegram.error import TelegramError
 
 from . import config
+from . import pyro_uploader
 from .database import db
 from .downloader import download_url, DownloadError
 from .utils import format_bytes, format_eta, progress_bar
@@ -25,6 +26,10 @@ logger = logging.getLogger("url_bot.queue")
 
 VIDEO_EXT = (".mp4", ".mkv", ".webm", ".mov", ".avi", ".flv", ".m3u8", ".ts")
 AUDIO_EXT = (".mp3", ".m4a", ".wav", ".flac", ".ogg", ".aac")
+
+# Standard Bot HTTP API hard-caps uploads at 50MB no matter what. Anything
+# bigger goes out over MTProto (Pyrogram) instead, if it's available.
+HTTP_UPLOAD_LIMIT_BYTES = 50 * 1024 * 1024
 
 
 class QueueManager:
@@ -113,11 +118,14 @@ class QueueManager:
                     f"File too large ({format_bytes(size)} > {config.MAX_FILE_SIZE_MB}MB limit)"
                 )
 
+            progress["stage"] = "uploading"
+            progress["downloaded"] = 0
+            progress["total"] = size
             await self._update_status(
                 chat_id, stats=stats, current_num=current_num, url=url,
                 stage="uploading", filename=os.path.basename(filepath),
             )
-            await self._upload(chat_id, filepath)
+            await self._upload(chat_id, filepath, progress=progress)
             await db.mark_completed(item_id, os.path.basename(filepath))
 
         except Exception as e:
@@ -143,31 +151,65 @@ class QueueManager:
         try:
             while True:
                 await asyncio.sleep(config.STATUS_EDIT_INTERVAL)
-                if progress.get("stage") in ("done", "error"):
+                stage = progress.get("stage")
+                if stage in ("done", "error"):
                     return
+                ui_stage = "uploading" if stage == "uploading" else "downloading"
                 await self._update_status(
                     chat_id, stats=stats, current_num=current_num, url=url,
-                    stage="downloading", progress=progress,
+                    stage=ui_stage, progress=progress, filename=progress.get("filename"),
                 )
         except asyncio.CancelledError:
             return
 
     # -------------------------------------------------------------- I/O
-    async def _upload(self, chat_id: int, filepath: str):
+    async def _upload(self, chat_id: int, filepath: str, progress: dict = None):
         name = os.path.basename(filepath)
         ext = os.path.splitext(name)[1].lower()
         caption = f"📁 {name}"
+        size = os.path.getsize(filepath)
+
+        if ext in VIDEO_EXT:
+            kind = "video"
+        elif ext in AUDIO_EXT:
+            kind = "audio"
+        else:
+            kind = "document"
+
+        # Standard Bot API cannot move more than 50MB. For anything bigger we
+        # need MTProto (Pyrogram) instead — if it isn't configured/available,
+        # fail with a clear, actionable error rather than a confusing
+        # Telegram "Request Entity Too Large".
+        if size > HTTP_UPLOAD_LIMIT_BYTES:
+            if not pyro_uploader.is_available():
+                if not pyro_uploader.is_configured():
+                    raise DownloadError(
+                        f"File is {format_bytes(size)} (over the 50MB Bot API limit). "
+                        "Set API_ID and API_HASH in .env (from https://my.telegram.org) "
+                        "and install pyrogram to enable larger uploads."
+                    )
+                raise DownloadError(
+                    f"File is {format_bytes(size)} (over the 50MB Bot API limit), and "
+                    "the MTProto uploader is not connected. Check the bot logs."
+                )
+            try:
+                await pyro_uploader.upload(
+                    chat_id, filepath, name, caption, kind, progress=progress
+                )
+            except Exception as e:
+                raise DownloadError(f"MTProto upload error: {e}")
+            return
 
         with open(filepath, "rb") as f:
             input_file = InputFile(f, filename=name)
             try:
-                if ext in VIDEO_EXT:
+                if kind == "video":
                     await self.bot.send_video(
                         chat_id, video=input_file, caption=caption,
                         supports_streaming=True, write_timeout=config.DOWNLOAD_TIMEOUT,
                         read_timeout=config.DOWNLOAD_TIMEOUT,
                     )
-                elif ext in AUDIO_EXT:
+                elif kind == "audio":
                     await self.bot.send_audio(
                         chat_id, audio=input_file, caption=caption,
                         write_timeout=config.DOWNLOAD_TIMEOUT, read_timeout=config.DOWNLOAD_TIMEOUT,
