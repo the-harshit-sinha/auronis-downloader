@@ -95,7 +95,24 @@ def build_app() -> Application:
     return app
 
 
+def _ensure_event_loop():
+    """
+    python-telegram-bot 21.4 still calls the legacy asyncio.get_event_loop()
+    internally. Python 3.14 removed implicit loop auto-creation, so that call
+    raises RuntimeError on a thread with no loop set — even the main thread.
+    Explicitly creating and registering a loop up front makes get_event_loop()
+    succeed on any Python version (3.9 through 3.14+), independent of whatever
+    interpreter the host actually runs.
+    """
+    try:
+        asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+
 def main():
+    _ensure_event_loop()
     keep_alive()  # 24/7 web server so Render/Replit-style hosts don't kill the service
     app = build_app()
     logger.info("Starting polling...")

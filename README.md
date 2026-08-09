@@ -134,3 +134,19 @@ service from spinning down on Render's free tier.
 If you deploy as a Render **Background Worker** instead (no public port
 needed), `keep_alive()` still runs harmlessly — you can remove the
 `keep_alive()` call in `main.py` if you'd rather not open a port at all.
+
+
+## Update: fixed the `RuntimeError: There is no current event loop` crash
+
+If your host still runs Python 3.14 despite `runtime.txt`/`.python-version`
+(Render's native Python builder doesn't always honor these the way
+Heroku's buildpacks do), the crash is now fixed at the code level instead:
+`main.py` calls `_ensure_event_loop()` before `run_polling()`, which
+explicitly creates and registers an event loop if none exists yet. This
+works on any Python version (3.9–3.14+), so the fix no longer depends on
+which interpreter Render actually picks.
+
+`runtime.txt` and `.python-version` (both pinning `3.11.9`) are still
+included as a belt-and-suspenders measure — if Render does respect one of
+them on your account/plan, great; if not, the code-level fix covers it
+either way.
