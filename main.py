@@ -28,6 +28,7 @@ from bot.handlers.queue import queue_handler
 from bot.handlers.cancel import cancel_handler
 from bot.handlers.messages import url_message_handler, txt_file_handler
 from bot.handlers.callbacks import callback_router
+from keep_alive import keep_alive
 
 logger = config.setup_logging()
 
@@ -95,6 +96,7 @@ def build_app() -> Application:
 
 
 def main():
+    keep_alive()  # 24/7 web server so Render/Replit-style hosts don't kill the service
     app = build_app()
     logger.info("Starting polling...")
     app.run_polling(allowed_updates=["message", "callback_query"])

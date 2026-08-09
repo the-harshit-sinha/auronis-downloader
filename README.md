@@ -109,3 +109,28 @@ Telegram would reject.
 - Add per-user rate limiting or concurrency (multiple chats already run in
   parallel; true multi-worker-per-chat is deliberately not supported to
   respect "one URL at a time").
+
+
+## Deploying on Render (or other Python 3.14 hosts)
+
+`python-telegram-bot` 21.4 predates Python 3.14, which removed the implicit
+event-loop auto-creation that PTB's `run_polling()` relies on — on 3.14 you'll
+see `RuntimeError: There is no current event loop in thread 'MainThread'`.
+
+This project pins the interpreter with **`runtime.txt`** (`python-3.11.9`),
+which Render (and Heroku-style buildpacks) read automatically — no extra
+config needed, just make sure `runtime.txt` is included in your deploy.
+
+It also ships a small **Flask keep-alive server** (`keep_alive.py`) started
+from `main.py` before polling begins. Render's free "Web Service" tier
+expects something bound to `$PORT`; without it the service is considered
+unhealthy even though the bot is working. `keep_alive()` runs Flask in a
+background thread on `$PORT` (defaults to 8080 locally) answering `/` and
+`/health`, while the actual Telegram long-polling loop keeps running in the
+main thread untouched. Pair it with a free uptime pinger (e.g. UptimeRobot)
+hitting `https://<your-app>.onrender.com/` every few minutes to prevent the
+service from spinning down on Render's free tier.
+
+If you deploy as a Render **Background Worker** instead (no public port
+needed), `keep_alive()` still runs harmlessly — you can remove the
+`keep_alive()` call in `main.py` if you'd rather not open a port at all.
