@@ -1,0 +1,6 @@
+python-telegram-bot[job-queue]==21.4
+yt-dlp>=2024.8.6
+aiohttp>=3.9.5
+aiosqlite>=0.20.0
+aiofiles>=24.1.0
+python-dotenv>=1.0.1
